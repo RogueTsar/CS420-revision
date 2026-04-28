@@ -1,3 +1,4 @@
+Topics
 1. Probability and Naive Bayes
 2. Naive Bayes and Bayesian Networks
 3. Linear Algebra and Gradient Descent and Deep Neural Networks
