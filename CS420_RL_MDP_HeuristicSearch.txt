@@ -1,0 +1,1285 @@
+CS420 CONCEPT REFERENCE
+Heuristic Search | Markov Decision Problems | Reinforcement Learning
+Prepared by: Vaishnavi Singh | Based on: CS420 Lectures, Sample Exam, Assignments 1 and 2
+Reference texts: Russell and Norvig AIMA (4th ed.), Sutton and Barto RL: An Introduction (2018)
+
+=======================================================================
+ASSUMPTIONS AND SCOPE
+=======================================================================
+
+This document assumes:
+- You know basic probability (conditional probability, Bayes rule).
+- You know graph search basics (frontier, visited sets).
+- You know what a CPD and DAG are (from the BN topics).
+- All MDPs here are finite, discrete, and tabular.
+- All code blocks run in Python 3.x with standard scientific libraries.
+
+Confidence note: The mathematical claims below follow directly from
+Russell and Norvig and Sutton and Barto. The proofs are standard. Any
+empirical performance claims (e.g. "A* is faster than Dijkstra in
+practice") depend on heuristic quality and graph topology. Do not treat
+those as absolute.
+
+=======================================================================
+SECTION 1: HEURISTIC SEARCH
+=======================================================================
+
+-----------------------------------------------------------------------
+1.1 PROBLEM FORMULATION
+-----------------------------------------------------------------------
+
+A search problem has five components:
+- S: a set of states
+- s0: the initial state
+- A(s): the set of actions available at state s
+- T(s, a): the successor state after taking action a at state s
+- g(s): a goal test returning True or False
+- c(s, a, s'): the step cost of taking action a from s to reach s'
+
+The path cost g(n) is the sum of step costs along a path from s0 to n.
+The optimal path minimises total path cost from s0 to a goal state.
+
+Assumption: step costs are non-negative. This is required for the
+completeness and optimality guarantees discussed below. If costs can be
+negative, the guarantees do not hold without modification.
+
+-----------------------------------------------------------------------
+1.2 HEURISTIC FUNCTIONS
+-----------------------------------------------------------------------
+
+A heuristic h(n) estimates the cost from state n to the nearest goal.
+
+h(n) is a scalar value >= 0 for all n.
+h(goal) = 0 by definition.
+h*(n) denotes the true optimal cost from n to a goal.
+
+Two key properties of heuristics:
+
+ADMISSIBILITY
+h(n) is admissible if and only if:
+  h(n) <= h*(n) for all nodes n
+
+An admissible heuristic never overestimates.
+This guarantees A* tree search returns an optimal solution.
+Reference: Russell and Norvig, AIMA Chapter 3.
+
+CONSISTENCY (also called monotonicity)
+h(n) is consistent if and only if for every node n and every successor
+n' reached by action a:
+  h(n) <= c(n, a, n') + h(n')
+
+This is the triangle inequality applied to heuristic estimates.
+
+Key relationship:
+- Consistency implies admissibility. Proof below.
+- Admissibility does NOT imply consistency.
+
+PROOF: consistency implies admissibility
+Suppose h is consistent. We want to show h(n) <= h*(n) for all n.
+
+Let n = n0, n1, ..., nk = goal be the optimal path from n.
+By consistency applied repeatedly:
+  h(n0) <= c(n0,a0,n1) + h(n1)
+         <= c(n0,a0,n1) + c(n1,a1,n2) + h(n2)
+         <= ...
+         <= sum of all step costs along optimal path + h(goal)
+         = h*(n0) + 0
+         = h*(n0)
+
+So h(n0) <= h*(n0). This holds for all n0. QED.
+
+Consequence of inconsistency:
+If h is only admissible but not consistent, A* with a strict closed
+list (graph search, no re-expansion) is NOT guaranteed to find the
+optimal path. You must allow re-expansion of nodes, or use tree search
+(which may revisit states). This is the case in Assignment 2 Q1.
+
+-----------------------------------------------------------------------
+1.3 A* SEARCH ALGORITHM
+-----------------------------------------------------------------------
+
+A* uses f(n) = g(n) + h(n) as the priority for the frontier.
+g(n) = cost from start to n (exact).
+h(n) = heuristic estimate from n to goal.
+
+AIMA-style graph search with re-expansion (handles inconsistent h):
+
+----------------------------------------------------------------------
+Algorithm: A* Graph Search with re-expansion
+----------------------------------------------------------------------
+Input: initial state, goal state, heuristic h
+Output: optimal path and cost, or failure
+
+1. Initialize:
+   frontier = priority queue, sorted by f = g + h
+   Insert Node(initial, parent=None, g=0, f=h(initial))
+   reached = {}   # maps state -> best known g
+
+2. While frontier is not empty:
+   a. node = frontier.pop()   # node with lowest f
+
+   b. If node.state is in reached AND node.g > reached[node.state]:
+      continue   # stale entry, skip
+
+   c. If node.state == goal:
+      return node   # goal reached, STOP
+
+   d. reached[node.state] = node.g   # record best known g
+
+   e. For each (neighbour, step_cost) in EXPAND(node.state):
+      child_g = node.g + step_cost
+      If neighbour not in reached OR child_g < reached[neighbour]:
+         Insert Node(neighbour, parent=node, g=child_g,
+                     f=child_g + h(neighbour)) into frontier
+         reached[neighbour] = child_g
+
+3. Return failure
+----------------------------------------------------------------------
+
+Note: the algorithm pops on goal test, not pushes. This matters when
+h is inconsistent. If you goal-test on push, you might accept a
+suboptimal path to the goal before a better one is found.
+
+OPTIMALITY GUARANTEE
+If h is admissible, A* tree search is optimal.
+If h is consistent, A* graph search (with closed list, no re-expansion)
+is optimal. If h is only admissible but not consistent, you need
+re-expansion as shown above to guarantee optimality.
+
+-----------------------------------------------------------------------
+1.4 WORKED EXAMPLE: Assignment 2 Q1
+-----------------------------------------------------------------------
+
+Graph edges (directed):
+  S->B (4), S->C (7), B->C (2), B->R (5),
+  C->R (8), C->A (6), R->G (12), A->G (8)
+
+Heuristics given:
+  h(S)=19, h(B)=16, h(C)=12, h(R)=5, h(A)=8, h(G)=0
+
+Step 1: compute h*(n) via Dijkstra / backward enumeration
+
+  h*(G) = 0
+  h*(A) = 8   (only path: A->G)
+  h*(R) = 12  (only path: R->G)
+  h*(C) = min(C->R->G: 20, C->A->G: 14) = 14
+  h*(B) = min(B->R->G: 17, B->C->A->G: 16) = 16
+  h*(S) = min(S->B->C->A->G: 20, S->B->R->G: 21, S->C->A->G: 21) = 20
+
+Step 2: admissibility check (h(n) <= h*(n) for all n?)
+
+  S: 19 <= 20  PASS
+  B: 16 <= 16  PASS (tight)
+  C: 12 <= 14  PASS
+  R:  5 <= 12  PASS
+  A:  8 <=  8  PASS (tight)
+  G:  0 <=  0  PASS
+
+Conclusion: h is admissible.
+
+Step 3: consistency check (h(n) <= cost(n,a,n') + h(n') for all edges?)
+
+  S->B (4): 19 <= 4+16=20  PASS
+  S->C (7): 19 <= 7+12=19  PASS (tight)
+  B->C (2): 16 <= 2+12=14  FAIL (16 > 14)
+
+Conclusion: h is NOT consistent. B->C violates the triangle inequality.
+h(B) was set tightly to match h*(B)=16, but the direct shortcut B->C
+reaches C whose heuristic is only 12. The cost of 2 plus 12 equals 14,
+which is less than 16.
+
+Step 4: A* search trace (with re-expansion to handle inconsistency)
+
+Notation: Pop [state] (g=x, f=y): expand to ...
+
+Iter | Pop        | g    | f    | changes
+-----|------------|------|------|------------------------------
+ 1   | S          | 0.0  | 19.0 | add B(g=4,f=20), C(g=7,f=19)
+     |            |      |      | reached={S:0, B:4, C:7}
+ 2   | C          | 7.0  | 19.0 | add R(g=15,f=20), A(g=13,f=21)
+     |            |      |      | reached adds R:15, A:13
+ 3   | B          | 4.0  | 20.0 | B->C: g=6 < reached[C]=7, update C(g=6,f=18)
+     |            |      |      | B->R: g=9 < reached[R]=15, update R(g=9,f=14)
+ 4   | R          | 9.0  | 14.0 | add G(g=21,f=21), reached adds G:21
+ 5   | C          | 6.0  | 18.0 | C->R: g=14 > reached[R]=9, skip
+     |            |      |      | C->A: g=12 < reached[A]=13, update A(g=12,f=20)
+ 6   | A          | 12.0 | 20.0 | A->G: g=20 < reached[G]=21, update G(g=20,f=20)
+ 7   | G          | 20.0 | 20.0 | GOAL REACHED, STOP
+
+Final path: S -> B -> C -> A -> G
+Path cost: 4 + 2 + 6 + 8 = 20 (optimal)
+
+Why does re-expansion matter here?
+At iteration 2, C was expanded with g=7. At iteration 3, B finds a
+cheaper path to C (g=6). C gets pushed again with f=18. At iteration 5,
+C is popped and expanded again. This second expansion of C finds the
+better path to A (g=12 vs 13). Without re-expansion, A would have g=13
+and G would have cost 21, not 20. The optimal is missed.
+
+-----------------------------------------------------------------------
+1.5 CODE IMPLEMENTATION: A* WITH RE-EXPANSION
+-----------------------------------------------------------------------
+
+```python
+import heapq
+import itertools
+from dataclasses import dataclass, field
+from typing import Optional, Dict, List, Tuple
+
+_counter = itertools.count()
+
+@dataclass(order=False)
+class Node:
+    state: str
+    parent: Optional[object]
+    action: Optional[str]
+    path_cost: float
+    insert_idx: int = field(default_factory=lambda: 0)
+
+    def f(self) -> float:
+        return self.path_cost + H[self.state]
+
+    def __lt__(self, other) -> bool:
+        if self.f() != other.f():
+            return self.f() < other.f()
+        return self.insert_idx < other.insert_idx
+
+    def path(self):
+        nodes, cur = [], self
+        while cur:
+            nodes.append(cur.state)
+            cur = cur.parent
+        return list(reversed(nodes))
+
+
+# Graph definition
+EDGES = {
+    'S': [('B', 4), ('C', 7)],
+    'B': [('C', 2), ('R', 5)],
+    'C': [('R', 8), ('A', 6)],
+    'R': [('G', 12)],
+    'A': [('G', 8)],
+    'G': []
+}
+
+# Heuristic function
+H = {'S': 19, 'B': 16, 'C': 12, 'R': 5, 'A': 8, 'G': 0}
+
+
+def EXPAND(node: Node) -> List[Node]:
+    children = []
+    for neighbour, step_cost in EDGES[node.state]:
+        child = Node(
+            state=neighbour,
+            parent=node,
+            action=f'{node.state}->{neighbour} (cost={step_cost})',
+            path_cost=node.path_cost + step_cost,
+            insert_idx=next(_counter)
+        )
+        children.append(child)
+    return children
+
+
+def astar_graph_search(initial: str, goal: str) -> Optional[Node]:
+    root = Node(initial, None, None, 0.0, insert_idx=next(_counter))
+    frontier: list = [root]
+    heapq.heapify(frontier)
+    reached: Dict[str, float] = {}
+
+    while frontier:
+        node = heapq.heappop(frontier)
+
+        # skip stale entries
+        if node.state in reached and node.path_cost > reached[node.state]:
+            continue
+
+        if node.state == goal:
+            return node
+
+        reached[node.state] = node.path_cost
+
+        for child in EXPAND(node):
+            s = child.state
+            if s not in reached or child.path_cost < reached[s]:
+                reached[s] = child.path_cost
+                heapq.heappush(frontier, child)
+
+    return None
+
+
+solution = astar_graph_search('S', 'G')
+print(f"Path: {' -> '.join(solution.path())}")
+print(f"Cost: {solution.path_cost}")
+# Expected: Path: S -> B -> C -> A -> G, Cost: 20
+
+
+def check_admissibility():
+    """Dijkstra backward from goal to verify h*(n) >= h(n)."""
+    dist = {s: float('inf') for s in EDGES}
+    dist['G'] = 0
+    pq = [(0, 'G')]
+    # build reverse graph
+    rev = {s: [] for s in EDGES}
+    for s, nbrs in EDGES.items():
+        for (t, c) in nbrs:
+            rev[t].append((s, c))
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d > dist[u]:
+            continue
+        for (v, c) in rev[u]:
+            if dist[u] + c < dist[v]:
+                dist[v] = dist[u] + c
+                heapq.heappush(pq, (dist[v], v))
+    print("Admissibility check:")
+    print(f"{'Node':<6} {'h(n)':<8} {'h*(n)':<8} {'h<=h*?'}")
+    for n in ['S','B','C','R','A','G']:
+        ok = H[n] <= dist[n]
+        print(f"{n:<6} {H[n]:<8} {dist[n]:<8} {'OK' if ok else 'VIOLATION'}")
+    return all(H[n] <= dist[n] for n in H)
+
+
+def check_consistency():
+    """Check h(n) <= cost + h(n') for all directed edges."""
+    print("Consistency check:")
+    all_ok = True
+    for n, nbrs in EDGES.items():
+        for (m, cost) in nbrs:
+            lhs = H[n]
+            rhs = cost + H[m]
+            ok = lhs <= rhs
+            if not ok:
+                all_ok = False
+            print(f"  {n}->{m} (cost={cost}): h({n})={lhs} <= {cost}+h({m})={rhs}? "
+                  f"{'OK' if ok else f'VIOLATION ({lhs} > {rhs})'}")
+    return all_ok
+
+
+check_admissibility()
+check_consistency()
+```
+
+Output (expected):
+  Admissibility check:
+  Node   h(n)     h*(n)    h<=h*?
+  S      19       20       OK
+  B      16       16       OK
+  C      12       14       OK
+  R      5        12       OK
+  A      8        8        OK
+  G      0        0        OK
+
+  Consistency check:
+  S->B (cost=4): h(S)=19 <= 4+h(B)=20? OK
+  S->C (cost=7): h(S)=19 <= 7+h(C)=19? OK
+  B->C (cost=2): h(B)=16 <= 2+h(C)=14? VIOLATION (16 > 14)
+  B->R (cost=5): h(B)=16 <= 5+h(R)=10? VIOLATION (16 > 10)
+  C->R (cost=8): h(C)=12 <= 8+h(R)=13? OK
+  C->A (cost=6): h(C)=12 <= 6+h(A)=14? OK
+  R->G (cost=12): h(R)=5 <= 12+h(G)=12? OK
+  A->G (cost=8): h(A)=8 <= 8+h(G)=8? OK
+
+-----------------------------------------------------------------------
+1.6 LIMITS AND QUALIFICATIONS ON HEURISTIC SEARCH
+-----------------------------------------------------------------------
+
+Limit 1: A* is only as good as h.
+If h = 0 everywhere (null heuristic), A* degenerates to Dijkstra's
+algorithm. If h = h*, A* expands only nodes on the optimal path.
+In practice, h lies between these extremes.
+
+Limit 2: time and space complexity.
+A* stores all nodes in memory. Space complexity is O(b^d) where b is
+the branching factor and d is the depth of the optimal solution.
+For large state spaces this is prohibitive.
+Variants like IDA* (iterative deepening A*) reduce memory to O(d) at
+the cost of re-expanding nodes.
+
+Limit 3: optimality vs. consistency.
+The sample exam (Q8) states "not consistent" with no further
+justification. In exam settings this is sufficient. In practice, the
+consequence matters: graph search without re-expansion fails to find
+the optimum when h is inconsistent.
+
+Limit 4: consistency is a stronger claim.
+Consistency is sufficient but not necessary for graph search optimality.
+There exist admissible-but-inconsistent heuristics where graph search
+still finds the optimum by coincidence of graph structure. Do not claim
+graph search always fails with inconsistent h; claim it is not
+guaranteed to succeed.
+
+=======================================================================
+SECTION 2: MARKOV DECISION PROBLEMS
+=======================================================================
+
+-----------------------------------------------------------------------
+2.1 MDP FORMULATION
+-----------------------------------------------------------------------
+
+An MDP is a tuple <S, A, T, R, gamma>:
+
+- S: finite set of states
+- A: finite set of actions
+- T(s, a, s'): transition probability P(s'|s,a)
+  - sum over s' of T(s,a,s') = 1 for all (s,a)
+- R(s, a, s'): reward received on transition s->s' under action a
+  - some formulations use R(s,a) or R(s); all are equivalent given
+    a deterministic or averaged reward
+- gamma in [0,1): discount factor
+- (optional) s0: initial state distribution
+
+The Markov property holds: the next state depends only on (s,a), not on
+history. This is the defining structural assumption. If it does not hold
+empirically, the MDP formulation is approximate.
+
+For the CS420 grid world (Assignment 2 Q3):
+- Stochastic transitions: T(s,a,s') = 0.8 intended, 0.1 each perp
+- Terminal states: Food (3,4), Tiger (2,4)
+- Step reward: -0.2 for all non-terminal transitions
+- Terminal rewards: +1 for Food, -1 for Tiger
+- gamma = 0.95
+
+For the CS420 exam robot (Q9):
+- Deterministic transitions: T(s,a,s') in {0,1}
+- gamma = 0.9
+
+-----------------------------------------------------------------------
+2.2 POLICY AND VALUE FUNCTIONS
+-----------------------------------------------------------------------
+
+A policy pi maps states to actions: pi: S -> A.
+A deterministic policy picks one action per state.
+A stochastic policy picks a distribution over actions.
+
+The value function V^pi(s) is the expected discounted return
+starting from s and following policy pi:
+
+  V^pi(s) = E_pi [ sum_{t=0}^{inf} gamma^t * R_t | s_0 = s ]
+
+The Q-function Q^pi(s,a) is the expected discounted return
+starting from s, taking action a, then following pi:
+
+  Q^pi(s,a) = sum_{s'} T(s,a,s') * [ R(s,a,s') + gamma * V^pi(s') ]
+
+The relationship between V and Q:
+
+  V^pi(s) = Q^pi(s, pi(s))   [for deterministic policy]
+
+The optimal value function V*(s) is:
+
+  V*(s) = max_a Q*(s,a)
+
+The optimal Q-function Q*(s,a) is:
+
+  Q*(s,a) = sum_{s'} T(s,a,s') * [ R(s,a,s') + gamma * V*(s') ]
+
+The optimal policy derives greedily from Q*:
+
+  pi*(s) = argmax_a Q*(s,a)
+
+-----------------------------------------------------------------------
+2.3 BELLMAN EQUATIONS
+-----------------------------------------------------------------------
+
+Bellman consistency equation for V^pi:
+
+  V^pi(s) = sum_{s'} T(s, pi(s), s') * [ R(s, pi(s), s') + gamma * V^pi(s') ]
+
+Bellman optimality equation for V*:
+
+  V*(s) = max_a sum_{s'} T(s,a,s') * [ R(s,a,s') + gamma * V*(s') ]
+
+These equations are fixed-point equations. V* is the unique fixed point
+of the Bellman optimality operator for gamma < 1 (Banach fixed point
+theorem applies). Reference: Sutton and Barto Chapter 4.
+
+-----------------------------------------------------------------------
+2.4 VALUE ITERATION
+-----------------------------------------------------------------------
+
+Value iteration applies the Bellman optimality operator repeatedly.
+It converges to V* as t -> infinity for gamma < 1.
+
+Algorithm:
+  Initialize V^0(s) = 0 for all s (arbitrary; zero is standard)
+  
+  For t = 0, 1, 2, ...:
+    For all s in S:
+      V^(t+1)(s) = max_a Q^(t+1)(s,a)
+      Q^(t+1)(s,a) = sum_{s'} T(s,a,s') * [ R(s,a,s') + gamma * V^t(s') ]
+  
+  Stop when max_s |V^(t+1)(s) - V^t(s)| < epsilon (convergence)
+
+Convergence rate: value iteration converges at a geometric rate.
+After k iterations, the error is at most gamma^k * (V_max - V_min) / (1-gamma).
+For gamma = 0.95 and reasonable V range, convergence takes many iterations.
+In exam questions, one or two iterations are performed manually.
+
+-----------------------------------------------------------------------
+2.5 WORKED EXAMPLE: CS420 Sample Exam Q9 (Robot, Deterministic)
+-----------------------------------------------------------------------
+
+States: S = {(Ground,Carrying), (Ground,NonCarrying),
+             (Upper,Carrying), (Upper,NonCarrying)}
+Actions: A = {Lift, Drop}
+Discount: gamma = 0.9
+Initialize: V^0(s) = 0 for all s
+
+Transition table (deterministic, T(s,a,s') = 1):
+
+  (Ground,Carrying)    + Lift  -> (Upper,Carrying)
+  (Ground,Carrying)    + Drop  -> (Ground,NonCarrying)
+  (Ground,NonCarrying) + Lift  -> (Upper,NonCarrying)
+  (Ground,NonCarrying) + Drop  -> (Ground,NonCarrying)
+  (Upper,Carrying)     + Lift  -> (Upper,Carrying)
+  (Upper,Carrying)     + Drop  -> (Ground,Carrying)
+  (Upper,NonCarrying)  + Lift  -> (Upper,Carrying)
+  (Upper,NonCarrying)  + Drop  -> (Ground,NonCarrying)
+
+Reward table:
+
+  (Ground,Carrying)    + Drop  -> +4  (successful delivery)
+  (Ground,Carrying)    + Lift  -> -1  (still carrying, no delivery)
+  (Upper,Carrying)     + Lift  -> -1  (still carrying)
+  (Upper,Carrying)     + Drop  -> -1  (still carrying after move down)
+  (Upper,NonCarrying)  + Lift  -> -1  (picks up package)
+  All others                   -> 0
+
+Note: the -1 applies to transitions where the agent carries a package
+after the transition without delivery. The +4 applies when the agent
+successfully delivers (Ground,Carrying + Drop).
+
+Computing V^1(s) = max_a Q^1(s,a):
+Since V^0 = 0 everywhere, Q^1(s,a) = R(s,a,s') alone.
+
+  V^1(Ground,Carrying):
+    Q^1(GC, Lift) = -1 + 0.9*0 = -1
+    Q^1(GC, Drop) = +4 + 0.9*0 = +4
+    V^1(GC) = max(-1, +4) = 4
+    pi^1(GC) = Drop
+
+  V^1(Ground,NonCarrying):
+    Q^1(GNC, Lift) = 0 + 0.9*0 = 0
+    Q^1(GNC, Drop) = 0 + 0.9*0 = 0
+    V^1(GNC) = max(0, 0) = 0
+    pi^1(GNC) = Lift or Drop (tie)
+
+  V^1(Upper,Carrying):
+    Q^1(UC, Lift) = -1 + 0.9*0 = -1
+    Q^1(UC, Drop) = -1 + 0.9*0 = -1
+    V^1(UC) = max(-1, -1) = -1
+    pi^1(UC) = Lift or Drop (tie)
+
+  V^1(Upper,NonCarrying):
+    Q^1(UNC, Lift) = -1 + 0.9*0 = -1
+    Q^1(UNC, Drop) = 0  + 0.9*0 = 0
+    V^1(UNC) = max(-1, 0) = 0
+    pi^1(UNC) = Drop
+
+Results:
+  V^1(Ground,Carrying)    = +4
+  V^1(Ground,NonCarrying) = 0
+  V^1(Upper,Carrying)     = -1
+  V^1(Upper,NonCarrying)  = 0
+
+-----------------------------------------------------------------------
+2.6 WORKED EXAMPLE: CS420 Assignment 2 Q3 (Stochastic Grid World)
+-----------------------------------------------------------------------
+
+Grid (3 rows x 4 cols, 1-indexed from top):
+
+  Row 3: (3,1) (3,2) (3,3) (3,4)=Food
+  Row 2: (2,1) BLOCK (2,3) (2,4)=Tiger
+  Row 1: (1,1) (1,2) (1,3) (1,4)
+
+Transition model: intended direction p=0.8, each perpendicular p=0.1.
+If the move hits a wall or Blocked cell, agent stays at s.
+R(s,a,s'=Food)  = +1
+R(s,a,s'=Tiger) = -1
+R(s,a,s')       = -0.2  for all other s'
+gamma = 0.95
+V^t(terminal) = 0 always.
+
+V^t values provided (from question):
+  (3,1)=0.197, (3,2)=0.570, (3,3)=0.882, (3,4)=Food=0
+  (2,1)=-0.177, (2,2)=Blocked, (2,3)=0.425, (2,4)=Tiger=0
+  (1,1)=-0.548, (1,2)=-0.291, (1,3)=0.042, (1,4)=-0.340
+
+Computing V^(t+1) for the three missing states (3,3), (2,1), (2,3):
+
+STATE (3,3):
+Neighbours: East=(3,4)=Food, North=wall->(3,3), South=(2,3), West=(3,2)
+
+Q^(t+1)((3,3), East):
+  0.8 * [R(Food)   + 0.95 * V^t(3,4)] = 0.8 * [+1.000 + 0] = +0.8000
+  0.1 * [R(-0.2)   + 0.95 * V^t(3,3)] = 0.1 * [-0.200 + 0.95*0.882] = +0.0638
+  0.1 * [R(-0.2)   + 0.95 * V^t(2,3)] = 0.1 * [-0.200 + 0.95*0.425] = +0.0204
+  Q(E) = 0.884
+
+Q^(t+1)((3,3), North) [wall, stays at (3,3), perpendiculars to East and West]:
+  0.8 * [-0.200 + 0.95 * 0.882] = +0.6285
+  0.1 * [-0.200 + 0.95 * Food=0... wait, East of (3,3) is Food]
+  0.8 * [-0.200 + 0.95 * 0.882] = 0.6285  // intended North -> wall, stays (3,3)
+  0.1 * [+1.000 + 0.95 * 0.000] = 0.1000  // perp East -> Food
+  0.1 * [-0.200 + 0.95 * 0.570] = 0.0342  // perp West -> (3,2)
+  Q(N) = 0.6285 + 0.1000 + 0.0342 = 0.7627... 
+
+Wait, let me recompute more carefully.
+
+For action North from (3,3):
+  intended: North from (3,3) hits wall (row 4 does not exist) -> stays at (3,3)
+  perp E: moves to (3,4) = Food
+  perp W: moves to (3,2)
+
+  0.8 * [-0.200 + 0.95 * 0.882] = 0.8 * [-0.200 + 0.8379] = 0.8 * 0.6379 = +0.5103
+  
+Wait, I need to re-check: V^t(3,3) = 0.882. The agent stays at (3,3) so uses V^t(3,3).
+  0.8 * [R(s,a,s=stays) + 0.95 * V^t(3,3)]
+  = 0.8 * [-0.200 + 0.95 * 0.882]
+  = 0.8 * 0.6379 = 0.5103
+
+  0.1 * [R(Food) + 0.95 * V^t(Food)] = 0.1 * [1.000 + 0] = 0.1000
+  0.1 * [R(-0.2) + 0.95 * V^t(3,2)] = 0.1 * [-0.200 + 0.95*0.570] = 0.1 * 0.3415 = 0.0342
+  Q(N) = 0.5103 + 0.1000 + 0.0342 = 0.6445
+
+That matches the assignment: Q(N) = 0.6445.
+
+For Q(East) from (3,3): [as computed above] = 0.8842.
+
+  V^(t+1)(3,3) = max(Q(E), Q(N), Q(S), Q(W)) = max(0.884, 0.644, ...) = 0.884
+  pi(3,3) = East
+
+STATE (2,1):
+Neighbours: North=(3,1), South=(1,1), East=Blocked->(2,1), West=wall->(2,1)
+
+Q^(t+1)((2,1), North):
+  0.8 * [-0.200 + 0.95 * V^t(3,1)] = 0.8 * [-0.200 + 0.95*0.197] = 0.8*(-0.0129) = -0.0103
+  0.1 * [-0.200 + 0.95 * V^t(2,1)] = 0.1 * [-0.200 + 0.95*(-0.177)] = 0.1*(-0.3682) = -0.0368
+  0.1 * [-0.200 + 0.95 * V^t(2,1)] = 0.1 * [-0.200 + 0.95*(-0.177)] = 0.1*(-0.3682) = -0.0368
+  [Both East/West bounce back to (2,1)]
+  Q(N) = -0.0103 - 0.0368 - 0.0368 = -0.0839
+
+  V^(t+1)(2,1) = -0.0839, pi(2,1) = North
+
+STATE (2,3):
+Neighbours: North=(3,3), East=(2,4)=Tiger, West=Blocked->(2,3), South=(1,3)
+
+Q^(t+1)((2,3), North):
+  0.8 * [-0.200 + 0.95 * V^t(3,3)] = 0.8 * [-0.200 + 0.95*0.882] = 0.8 * 0.6379 = +0.5103
+  0.1 * [-1.000 + 0.95 * V^t(Tiger)] = 0.1 * [-1.000 + 0] = -0.1000
+  0.1 * [-0.200 + 0.95 * V^t(2,3)] = 0.1 * [-0.200 + 0.95*0.425] = 0.1 * 0.2038 = +0.0204
+  Q(N) = 0.5103 - 0.1000 + 0.0204 = 0.4307
+
+  V^(t+1)(2,3) = 0.4307, pi(2,3) = North
+
+Final V^(t+1) grid:
+       C1       C2       C3       C4
+  R3:  +0.235   +0.579   +0.884   Food(0)
+  R2:  -0.084   Blocked  +0.431   Tiger(0)
+  R1:  -0.414   -0.223   +0.063   -0.280
+
+Final policy pi^(t+1):
+       C1   C2       C3   C4
+  R3:  E    E        E    Food
+  R2:  N    Blocked  N    Tiger
+  R1:  N    E        N    W
+
+-----------------------------------------------------------------------
+2.7 CODE IMPLEMENTATION: VALUE ITERATION
+-----------------------------------------------------------------------
+
+```python
+import numpy as np
+from collections import defaultdict
+
+# Grid world from Assignment 2 Q3
+# States are (row, col) 0-indexed: row 0 = bottom, row 2 = top
+# row 2 = R3, row 1 = R2, row 0 = R1 in exam notation
+
+GAMMA = 0.95
+STEP_R = -0.2
+FOOD  = (2, 3)   # R3C4
+TIGER = (1, 3)   # R2C4
+BLOCKED = (1, 1) # R2C2
+TERMINAL = {FOOD, TIGER}
+ACTIONS = {'N': (1,0), 'S': (-1,0), 'E': (0,1), 'W': (0,-1)}
+PERP = {'N':['E','W'], 'S':['E','W'], 'E':['N','S'], 'W':['N','S']}
+
+def next_state(r, c, action):
+    dr, dc = ACTIONS[action]
+    nr, nc = r+dr, c+dc
+    if nr < 0 or nr >= 3 or nc < 0 or nc >= 4 or (nr,nc) == BLOCKED:
+        return r, c
+    return nr, nc
+
+def get_reward(r, c, nr, nc):
+    if (nr,nc) == FOOD:  return +1.0
+    if (nr,nc) == TIGER: return -1.0
+    return STEP_R
+
+# V^t from question
+Vt = {
+    (2,0): 0.197, (2,1): 0.570, (2,2): 0.882, (2,3): 0.000,
+    (1,0):-0.177,              (1,2): 0.425, (1,3): 0.000,
+    (0,0):-0.548, (0,1):-0.291,(0,2): 0.042, (0,3):-0.340,
+}
+
+def Q(r, c, action):
+    intended = action
+    perps = PERP[action]
+    outcomes = [(0.8, intended), (0.1, perps[0]), (0.1, perps[1])]
+    total = 0.0
+    for prob, a in outcomes:
+        nr, nc = next_state(r, c, a)
+        R = get_reward(r, c, nr, nc)
+        Vt_next = Vt.get((nr, nc), 0.0)
+        total += prob * (R + GAMMA * Vt_next)
+    return total
+
+def value_iteration_one_step():
+    Vt1 = {}
+    Pi = {}
+    for r in range(3):
+        for c in range(4):
+            if (r,c) == BLOCKED:
+                Vt1[(r,c)] = None
+                Pi[(r,c)]  = '-'
+            elif (r,c) in TERMINAL:
+                Vt1[(r,c)] = 0.0
+                Pi[(r,c)]  = '-'
+            else:
+                qs = {a: Q(r,c,a) for a in ACTIONS}
+                Vt1[(r,c)] = max(qs.values())
+                Pi[(r,c)]  = max(qs, key=qs.get)
+    return Vt1, Pi
+
+Vt1, Pi = value_iteration_one_step()
+
+print("V^(t+1):")
+for r in [2,1,0]:
+    row = []
+    for c in range(4):
+        if (r,c) == BLOCKED:        row.append("  Block")
+        elif Vt1[(r,c)] == 0.0:     row.append(f"  {0.0:+.3f}")
+        else:                        row.append(f"  {Vt1[(r,c)]:+.3f}")
+    print(f"  row{r+1}: {''.join(row)}")
+
+print("\nPolicy pi^(t+1):")
+for r in [2,1,0]:
+    row = []
+    for c in range(4):
+        row.append(f"  {Pi[(r,c)]}")
+    print(f"  row{r+1}: {''.join(row)}")
+
+
+def full_value_iteration(n_iter=200, tol=1e-6):
+    """
+    Run full value iteration to convergence.
+    Returns V*, pi*.
+    """
+    V = {(r,c): 0.0 for r in range(3) for c in range(4)
+         if (r,c) != BLOCKED}
+    # override Vt with zeros for full VI
+    global Vt
+    original_Vt = dict(Vt)
+    Vt = V.copy()
+
+    for iteration in range(n_iter):
+        V_new = {}
+        for r in range(3):
+            for c in range(4):
+                if (r,c) == BLOCKED:   continue
+                if (r,c) in TERMINAL:
+                    V_new[(r,c)] = 0.0
+                    continue
+                qs = {a: Q(r,c,a) for a in ACTIONS}
+                V_new[(r,c)] = max(qs.values())
+        delta = max(abs(V_new[s] - Vt[s]) for s in V_new)
+        Vt = V_new
+        if delta < tol:
+            print(f"Converged at iteration {iteration+1}, delta={delta:.2e}")
+            break
+
+    Vt = original_Vt  # restore
+    return V_new
+
+V_star = full_value_iteration()
+print("\nV* (converged):")
+for r in [2,1,0]:
+    row = []
+    for c in range(4):
+        if (r,c) == BLOCKED:       row.append("  Block")
+        elif (r,c) in TERMINAL:    row.append(f"  {0.0:+.3f}")
+        else:                       row.append(f"  {V_star[(r,c)]:+.3f}")
+    print(f"  row{r+1}: {''.join(row)}")
+```
+
+-----------------------------------------------------------------------
+2.8 LIMITS AND QUALIFICATIONS ON MDPs AND VALUE ITERATION
+-----------------------------------------------------------------------
+
+Limit 1: tabular MDPs only.
+Value iteration stores V for all states explicitly. For large or
+continuous state spaces, this is intractable. Function approximation
+(e.g. neural networks) is required. This is outside CS420 scope.
+
+Limit 2: Markov property assumption.
+The MDP framework assumes the transition probability P(s'|s,a)
+depends only on (s,a), not on the history of states. If the true
+environment has memory (e.g. the agent's past actions affect future
+transitions), the MDP formulation is approximate.
+
+Limit 3: reward stationarity.
+Value iteration assumes the reward function does not change over time.
+Non-stationary reward functions require modifications such as finite
+horizon formulations or tracking reward changes.
+
+Limit 4: discount factor interpretation.
+gamma < 1 ensures convergence but also penalises distant rewards.
+For gamma = 0.95, a reward 20 steps away is worth 0.95^20 = 0.36 of
+its nominal value. The agent may fail to plan for long-horizon goals
+if gamma is too small relative to the required horizon.
+
+Limit 5: convergence is guaranteed but speed varies.
+Value iteration is guaranteed to converge for finite MDPs with gamma<1.
+However, the number of iterations depends on gamma and the reward range.
+For gamma close to 1, convergence is very slow.
+
+=======================================================================
+SECTION 3: REINFORCEMENT LEARNING
+=======================================================================
+
+-----------------------------------------------------------------------
+3.1 RL VS MDP PLANNING
+-----------------------------------------------------------------------
+
+In value iteration (Section 2), T(s,a,s') and R(s,a,s') are known.
+This is called model-based planning.
+
+In reinforcement learning, T and R are unknown. The agent learns from
+experience by interacting with the environment.
+
+An experience (transition) is a tuple: (s, a, r, s').
+The agent collects these by acting in the environment and uses them to
+estimate V or Q.
+
+This document covers model-free RL, specifically Q-learning and
+SARSA. These methods estimate Q(s,a) directly from experience without
+knowing T or R.
+
+-----------------------------------------------------------------------
+3.2 Q-LEARNING
+-----------------------------------------------------------------------
+
+Q-learning is an off-policy temporal difference (TD) learning algorithm.
+Reference: Watkins and Dayan (1992), Machine Learning.
+
+"Off-policy" means Q-learning updates the Q-function toward the
+greedy policy (max_a' Q(s',a')) regardless of what action the agent
+actually took. This is distinct from SARSA, which is on-policy.
+
+Q-learning update rule:
+Given an experience (s, a, r, s'):
+
+  Q_new(s,a) = Q(s,a) + alpha * [r + gamma * max_{a'} Q(s',a') - Q(s,a)]
+
+Components:
+- Q(s,a): current Q-value estimate for (s,a)
+- alpha: learning rate (0 < alpha <= 1)
+- r: immediate reward received
+- gamma: discount factor
+- max_{a'} Q(s',a'): bootstrapped estimate of future value from s'
+- [r + gamma * max_{a'} Q(s',a') - Q(s,a)]: TD error (delta)
+
+The TD error measures the gap between the current estimate Q(s,a)
+and the target r + gamma * max_{a'} Q(s',a').
+Q-learning updates Q(s,a) by alpha times this error.
+
+If alpha is too large, Q-learning overshoots and may diverge.
+If alpha is too small, learning is slow.
+
+For terminal states s', max_{a'} Q(s',a') = 0 by convention.
+So the update at the last step before terminal is:
+  Q_new(s,a) = Q(s,a) + alpha * [r + 0 - Q(s,a)]
+             = Q(s,a) + alpha * [r - Q(s,a)]
+
+Convergence guarantee: Q-learning converges to Q* with probability 1
+if all (s,a) pairs are visited infinitely often AND the learning rate
+satisfies the Robbins-Monro conditions (sum alpha_t = inf, sum alpha_t^2 < inf).
+For constant alpha, convergence to Q* is not guaranteed in the limit,
+but empirical performance is often acceptable.
+Reference: Tsitsiklis (1994), IEEE TAC.
+
+-----------------------------------------------------------------------
+3.3 WORKED EXAMPLE: CS420 Sample Exam Q10
+-----------------------------------------------------------------------
+
+Grid (2 rows x 3 cols):
+  S1  S2  S3
+  S4  S5  G (terminal)
+
+All Q-values initialised to 0.
+alpha = 0.1, gamma = 0.9.
+
+Experience sequence:
+  1. (S1, Right, -1, S2)
+  2. (S2, Right, -1, S3)
+  3. (S3, Down, +5, G)
+
+Processing experience 1: (S1, Right, -1, S2)
+  target = r + gamma * max_{a'} Q(S2, a')
+         = -1 + 0.9 * max(Q(S2,Up), Q(S2,Down), Q(S2,Left), Q(S2,Right))
+         = -1 + 0.9 * 0   [all Q=0 at this point]
+         = -1
+  delta = target - Q(S1,Right) = -1 - 0 = -1
+  Q_new(S1,Right) = 0 + 0.1 * (-1) = -0.1
+
+Processing experience 2: (S2, Right, -1, S3)
+  target = -1 + 0.9 * max(Q(S3,a')) = -1 + 0 = -1
+  Q_new(S2,Right) = 0 + 0.1 * (-1) = -0.1
+
+Processing experience 3: (S3, Down, +5, G)
+  G is terminal, so max_{a'} Q(G,a') = 0
+  target = 5 + 0.9 * 0 = 5
+  delta = 5 - Q(S3,Down) = 5 - 0 = 5
+  Q_new(S3,Down) = 0 + 0.1 * 5 = 0.5
+
+Updated Q-values (only changed entries):
+  Q(S1, Right) = -0.1
+  Q(S2, Right) = -0.1
+  Q(S3, Down)  = +0.5
+
+All other Q(s,a) remain 0.
+
+Note: after only one episode with three transitions, the Q-values are
+still far from Q*. Multiple episodes are required for convergence.
+The updates propagate rewards backward: after many episodes, the -1
+rewards at S1 and S2 will be discounted and balanced against the +5
+at S3.
+
+-----------------------------------------------------------------------
+3.4 SARSA (ON-POLICY TD)
+-----------------------------------------------------------------------
+
+SARSA is the on-policy version of Q-learning.
+The update uses the actual next action a' taken by the agent (under
+the current policy), not the greedy max:
+
+  Q_new(s,a) = Q(s,a) + alpha * [r + gamma * Q(s',a') - Q(s,a)]
+
+The name SARSA refers to the quintuple (s, a, r, s', a').
+
+Key difference from Q-learning:
+- Q-learning: target uses max_{a'} Q(s',a')   (greedy, off-policy)
+- SARSA:      target uses Q(s', a')             (actual action, on-policy)
+
+If the agent follows a greedy policy (epsilon-greedy with epsilon=0),
+SARSA and Q-learning produce identical updates.
+
+For epsilon > 0, SARSA learns the Q-function for the epsilon-greedy
+policy itself, not for the optimal greedy policy. This means SARSA
+is safer in risky environments (the agent accounts for exploration
+penalties) but converges to a suboptimal policy unless epsilon decays.
+
+-----------------------------------------------------------------------
+3.5 CODE IMPLEMENTATION: Q-LEARNING
+-----------------------------------------------------------------------
+
+```python
+import numpy as np
+from collections import defaultdict
+import random
+
+# Grid from exam Q10
+STATES = ['S1','S2','S3','S4','S5','G']
+ACTIONS = ['Up','Down','Left','Right']
+TERMINAL = {'G'}
+
+# Grid layout (row,col) for reference
+# (0,0)=S1, (0,1)=S2, (0,2)=S3
+# (1,0)=S4, (1,1)=S5, (1,2)=G
+GRID = {
+    (0,0):'S1', (0,1):'S2', (0,2):'S3',
+    (1,0):'S4', (1,1):'S5', (1,2):'G'
+}
+POS = {v:k for k,v in GRID.items()}
+
+def step(state, action):
+    """Deterministic transition. Returns (next_state, reward)."""
+    if state in TERMINAL:
+        return state, 0  # absorbing
+    r, c = POS[state]
+    dr, dc = {'Up':(-1,0),'Down':(1,0),'Left':(0,-1),'Right':(0,1)}[action]
+    nr, nc = r+dr, c+dc
+    if (nr,nc) in GRID:
+        ns = GRID[(nr,nc)]
+    else:
+        ns = state  # wall, stay
+    reward = 5 if ns == 'G' else -1
+    return ns, reward
+
+
+def q_learning(episodes=500, alpha=0.1, gamma=0.9, epsilon=0.1, seed=42):
+    """Run Q-learning, return Q-table and episode returns."""
+    random.seed(seed)
+    np.random.seed(seed)
+    Q = defaultdict(lambda: defaultdict(float))
+    returns = []
+
+    for ep in range(episodes):
+        # start from S1 each episode (or random non-terminal)
+        s = 'S1'
+        ep_return = 0
+        t = 0
+
+        while s not in TERMINAL and t < 100:
+            # epsilon-greedy action selection
+            if random.random() < epsilon:
+                a = random.choice(ACTIONS)
+            else:
+                a = max(ACTIONS, key=lambda x: Q[s][x])
+
+            ns, r = step(s, a)
+            ep_return += (gamma**t) * r
+
+            # Q-learning update
+            max_Q_ns = max(Q[ns][a2] for a2 in ACTIONS) if ns not in TERMINAL else 0
+            td_error = r + gamma * max_Q_ns - Q[s][a]
+            Q[s][a] += alpha * td_error
+
+            s = ns
+            t += 1
+
+        returns.append(ep_return)
+
+    return Q, returns
+
+
+def manual_q_update():
+    """Reproduce the exact exam Q10 computation."""
+    Q = defaultdict(lambda: defaultdict(float))
+    alpha = 0.1
+    gamma = 0.9
+
+    experiences = [
+        ('S1', 'Right', -1, 'S2'),
+        ('S2', 'Right', -1, 'S3'),
+        ('S3', 'Down',  +5, 'G'),
+    ]
+
+    print("Q-learning manual trace (Exam Q10)")
+    print(f"{'Exp':<5} {'(s,a)':<20} {'r':<5} {'s_next':<8} "
+          f"{'max Q(s_next)':<15} {'TD error':<12} {'Q_new(s,a)'}")
+    print("-"*80)
+
+    for i, (s, a, r, ns) in enumerate(experiences):
+        max_Q_ns = max(Q[ns].values()) if Q[ns] else 0
+        td = r + gamma * max_Q_ns - Q[s][a]
+        Q[s][a] += alpha * td
+        print(f"{i+1:<5} ({s},{a}):{'':<10} {r:<5} {ns:<8} "
+              f"{max_Q_ns:<15.3f} {td:<12.3f} {Q[s][a]:.4f}")
+
+    print("\nFinal Q-table (non-zero entries):")
+    print(f"{'State':<8} {'Action':<8} {'Q(s,a)'}")
+    for s in STATES:
+        for a in ACTIONS:
+            if Q[s][a] != 0:
+                print(f"{s:<8} {a:<8} {Q[s][a]:.4f}")
+
+
+manual_q_update()
+
+# Run full training and plot convergence
+Q_final, returns = q_learning(episodes=1000)
+
+import matplotlib.pyplot as plt
+
+# Smooth returns with rolling average
+window = 50
+smoothed = np.convolve(returns, np.ones(window)/window, mode='valid')
+plt.figure(figsize=(8,4))
+plt.plot(smoothed)
+plt.xlabel('Episode')
+plt.ylabel('Smoothed Return')
+plt.title('Q-learning convergence (Grid World)')
+plt.tight_layout()
+plt.savefig('q_learning_convergence.png', dpi=120)
+plt.show()
+
+print("\nLearned policy (greedy from Q):")
+for s in ['S1','S2','S3','S4','S5']:
+    best_a = max(ACTIONS, key=lambda a: Q_final[s][a])
+    best_q = Q_final[s][best_a]
+    print(f"  pi({s}) = {best_a:8}  Q = {best_q:.4f}")
+```
+
+-----------------------------------------------------------------------
+3.6 COMPARISON: VALUE ITERATION VS Q-LEARNING
+-----------------------------------------------------------------------
+
+Property                 | Value Iteration        | Q-learning
+-------------------------|------------------------|------------------------
+Requires model T,R       | Yes                    | No
+Updates                  | Full DP sweep          | Sample-based TD
+Data                     | All (s,a,s') known     | (s,a,r,s') tuples
+Convergence              | Guaranteed (gamma<1)   | Guaranteed (with decaying alpha, all visited)
+Practical convergence    | Fast for small MDPs    | Slower, needs many samples
+Policy output            | argmax_a Q^t(s,a)      | argmax_a Q(s,a)
+
+Both converge to the same optimal Q* given sufficient computation.
+The difference is access to the model T,R.
+
+-----------------------------------------------------------------------
+3.7 FULL WORKED EXAMPLE: Q-LEARNING ON GRID FROM SCRATCH
+-----------------------------------------------------------------------
+
+This example shows what Q-learning converges to on the same grid,
+compared to value iteration, if the model T,R were unknown.
+
+Setup:
+- Grid world from Q10 but with deterministic transitions.
+- All Q(s,a) = 0 initially.
+- alpha = 0.1, gamma = 0.9, epsilon = 0.1.
+- Run 1000 episodes starting from S1.
+
+After convergence, the greedy policy should be:
+  pi(S1) = Right (toward S2->S3->G)
+  pi(S2) = Right (toward S3->G)
+  pi(S3) = Down  (reach G)
+
+The Q* values for the optimal path satisfy:
+  Q*(S3, Down) = 5 + 0.9 * 0 = 5
+  Q*(S2, Right) = -1 + 0.9 * max Q*(S3,.) = -1 + 0.9 * 5 = 3.5
+  Q*(S1, Right) = -1 + 0.9 * max Q*(S2,.) = -1 + 0.9 * 3.5 = 2.15
+
+These are the ground truth values the Q-learning should approach.
+The single episode from the exam gives only approximate initial updates.
+After many episodes, Q(S1,Right) converges toward 2.15, not -0.1.
+
+This illustrates that one-episode updates (as in exam questions) are
+not the converged Q*, but the intermediate state of learning.
+
+-----------------------------------------------------------------------
+3.8 LIMITS AND QUALIFICATIONS ON Q-LEARNING
+-----------------------------------------------------------------------
+
+Limit 1: tabular Q-learning only scales to small state spaces.
+The Q-table has |S| * |A| entries. For large or continuous state
+spaces, deep Q-networks (DQN) use neural function approximation.
+This is outside CS420 scope but relevant to understand the boundary.
+
+Limit 2: convergence requires all (s,a) visited infinitely often.
+If the exploration policy never visits certain state-action pairs,
+those Q-values remain at their initial values. Epsilon-greedy with
+decaying epsilon is a common practical solution.
+
+Limit 3: off-policy learning can be unstable with function approximation.
+For tabular Q-learning, off-policy updates converge. For deep Q-networks,
+the combination of off-policy updates, bootstrapping, and function
+approximation causes the "deadly triad" instability.
+Reference: Sutton and Barto, Chapter 11.
+
+Limit 4: the exam tests one-step updates, not convergence.
+Exam questions ask you to apply the Q-learning update formula once per
+experience. This tests that you know the formula, not that you understand
+convergence properties. Do not conflate the two.
+
+Limit 5: reward shaping affects what Q* represents.
+The Q* we compute depends on the reward function. If the reward function
+is misspecified, Q* maximises the wrong objective. This is a key
+concern in AI alignment research and is separate from the algorithmic
+correctness of Q-learning.
+
+=======================================================================
+SECTION 4: CROSS-TOPIC SYNTHESIS
+=======================================================================
+
+-----------------------------------------------------------------------
+4.1 HOW THE THREE TOPICS CONNECT
+-----------------------------------------------------------------------
+
+Heuristic search and MDPs both find optimal paths through state spaces.
+The differences:
+
+1. Heuristic search: deterministic transitions, full knowledge of the
+   graph, single-query planning (find one optimal path from s0 to goal).
+
+2. MDP planning (value iteration): stochastic transitions, full model
+   knowledge, computes a policy for all states simultaneously.
+
+3. RL (Q-learning): stochastic transitions, no model knowledge, learns
+   from experience, computes a policy for all states over time.
+
+A* solves search problems faster than MDP methods when the state space
+is large but you only need one path. Value iteration is better when you
+need a policy for many start states. Q-learning is used when the model
+is unknown.
+
+-----------------------------------------------------------------------
+4.2 BELLMAN EQUATION UNIFICATION
+-----------------------------------------------------------------------
+
+The Bellman equation appears in all three frameworks.
+
+In A*:
+  f(n) = g(n) + h(n)
+  This is a heuristic approximation to the true optimal f*(n) = g(n) + h*(n).
+  h*(n) satisfies: h*(n) = min_a [c(n,a,n') + h*(n')]
+  This is a deterministic special case of the Bellman optimality equation
+  with T(s,a,s') in {0,1} and R(s,a,s') = c(s,a,s').
+
+In value iteration:
+  V*(s) = max_a sum_{s'} T(s,a,s') * [R(s,a,s') + gamma * V*(s')]
+  This generalises to stochastic transitions and discounted returns.
+
+In Q-learning:
+  Q*(s,a) = sum_{s'} T(s,a,s') * [R(s,a,s') + gamma * max_{a'} Q*(s',a')]
+  Q-learning learns this without knowing T or R.
+
+The same fixed-point structure underlies all three. The key variation is
+whether T and R are known, and whether we need a policy or just a path.
+
+=======================================================================
+SECTION 5: QUICK REFERENCE FORMULAE
+=======================================================================
+
+A* priority:           f(n) = g(n) + h(n)
+Admissibility:         h(n) <= h*(n) for all n
+Consistency:           h(n) <= c(n,a,n') + h(n') for all (n,a,n')
+Consistency implies:   admissibility (proof in Section 1.2)
+
+Bellman Q-function:
+  Q^(t+1)(s,a) = sum_{s'} T(s,a,s') * [R(s,a,s') + gamma * V^t(s')]
+
+Bellman value:
+  V^(t+1)(s) = max_a Q^(t+1)(s,a)
+
+Optimal policy:
+  pi*(s) = argmax_a Q*(s,a)
+
+Q-learning update:
+  Q(s,a) <- Q(s,a) + alpha * [r + gamma * max_{a'} Q(s',a') - Q(s,a)]
+
+SARSA update:
+  Q(s,a) <- Q(s,a) + alpha * [r + gamma * Q(s',a') - Q(s,a)]
+  [where a' is the actual next action under current policy]
+
+Transition model (stochastic grid):
+  T(s, a, s') = 0.8 if s' is the intended next state
+  T(s, a, s') = 0.1 if s' is each perpendicular next state
+  T(s, a, s=self) += probability of hitting wall or Blocked cell
+
+=======================================================================
+END OF DOCUMENT
+=======================================================================
+
+Sources used:
+- Russell, S. and Norvig, P. (2020). Artificial Intelligence: A Modern
+  Approach, 4th edition. Chapter 3 (search), Chapter 17 (MDPs).
+- Sutton, R. and Barto, A. (2018). Reinforcement Learning: An
+  Introduction. Chapters 4 (DP), 6 (TD learning).
+- Watkins, C. and Dayan, P. (1992). Q-learning. Machine Learning 8, 279-292.
+- Tsitsiklis, J. (1994). Asynchronous stochastic approximation and
+  Q-learning. IEEE Transactions on Automatic Control.
+- CS420 Sample Exam solutions. Instructor: Zhize Li.
+- CS420 Assignment 2 solution. Vaishnavi Singh.
